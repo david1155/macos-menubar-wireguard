@@ -177,19 +177,19 @@ def checkStep1(appPath):
     
     if not os.path.isdir(appPath):
         raise CheckException("app not found", appPath)
-    
+
     # Check the app's code signature.
-        
+
     checkCodeSignature(appPath, "app")
-    
+
     # Check the tool directory.
-    
+
     toolDirPath = os.path.join(appPath, "Contents", "Library", "LaunchServices")
     if not os.path.isdir(toolDirPath):
         raise CheckException("tool directory not found", toolDirPath)
 
     # Check each tool's code signature.
-    
+
     toolPathList = []
     for toolName in os.listdir(toolDirPath):
         if toolName != ".DS_Store":
@@ -200,8 +200,8 @@ def checkStep1(appPath):
             toolPathList.append(toolPath)
 
     # Check that we have at least one tool.
-    
-    if len(toolPathList) == 0:
+
+    if not toolPathList:
         raise CheckException("no tools found", toolDirPath)
 
     return toolPathList
@@ -210,14 +210,14 @@ def checkStep2(appPath, toolPathList):
     """Checks the SMPrivilegedExecutables entry in the app's "Info.plist"."""
 
     # Create a map from the tool name (not path) to its designated requirement.
-    
-    toolNameToReqMap = dict()
+
+    toolNameToReqMap = {}
     for toolPath in toolPathList:
         req = readDesignatedRequirement(toolPath, "tool")
         toolNameToReqMap[os.path.basename(toolPath)] = req
-    
+
     # Read the Info.plist for the app and extract the SMPrivilegedExecutables value.
-    
+
     infoPath = os.path.join(appPath, "Contents", "Info.plist")
     info = readInfoPlistFromPath(infoPath)
     if not info.has_key("SMPrivilegedExecutables"):
@@ -225,14 +225,14 @@ def checkStep2(appPath, toolPathList):
     infoToolDict = info["SMPrivilegedExecutables"]
     if not isinstance(infoToolDict, dict):
         raise CheckException("'SMPrivilegedExecutables' must be a dictionary", infoPath)
-    
+
     # Check that the list of tools matches the list of SMPrivilegedExecutables entries.
-    
+
     if sorted(infoToolDict.keys()) != sorted(toolNameToReqMap.keys()):
         raise CheckException("'SMPrivilegedExecutables' and tools in 'Contents/Library/LaunchServices' don't match")
-    
+
     # Check that all the requirements match.
-    
+
     # This is an interesting policy choice.  Technically the tool just needs to match 
     # the requirement listed in SMPrivilegedExecutables, and we can check that by 
     # putting the requirement into tmp.req and then running
@@ -243,20 +243,22 @@ def checkStep2(appPath, toolPathList):
     # entry contain the tool's designated requirement because Xcode has built a 
     # more complex DR that does lots of useful and important checks.  So, as a matter 
     # of policy we require that the value in SMPrivilegedExecutables match the tool's DR.
-    
+
     for toolName in infoToolDict:
         if infoToolDict[toolName] != toolNameToReqMap[toolName]:
-            raise CheckException("tool designated requirement (%s) doesn't match entry in 'SMPrivilegedExecutables' (%s)" % (toolNameToReqMap[toolName], infoToolDict[toolName]))
+            raise CheckException(
+                f"tool designated requirement ({toolNameToReqMap[toolName]}) doesn't match entry in 'SMPrivilegedExecutables' ({infoToolDict[toolName]})"
+            )
 
 def checkStep3(appPath, toolPathList):
     """Checks the "Info.plist" embedded in each helper tool."""
 
     # First get the app's designated requirement.
-    
+
     appReq = readDesignatedRequirement(appPath, "app")
 
     # Then check that the tool's SMAuthorizedClients value matches it. 
-        
+
     for toolPath in toolPathList:
         info = readPlistFromToolSection(toolPath, "__TEXT", "__info_plist")
 
@@ -273,12 +275,15 @@ def checkStep3(appPath, toolPathList):
             raise CheckException("'SMAuthorizedClients' in tool __TEXT / __info_plist section must be an array", toolPath)
         if len(infoClientList) != 1:
             raise CheckException("'SMAuthorizedClients' in tool __TEXT / __info_plist section must have one entry", toolPath)
-            
+
         # Again, as a matter of policy we require that the SMAuthorizedClients entry must 
         # match exactly the designated requirement of the app.
 
         if infoClientList[0] != appReq:
-            raise CheckException("app designated requirement (%s) doesn't match entry in 'SMAuthorizedClients' (%s)" % (appReq, infoClientList[0]), toolPath)
+            raise CheckException(
+                f"app designated requirement ({appReq}) doesn't match entry in 'SMAuthorizedClients' ({infoClientList[0]})",
+                toolPath,
+            )
 
 def checkStep4(appPath, toolPathList):
     """Checks the "launchd.plist" embedded in each helper tool."""
@@ -397,7 +402,7 @@ def setreq(appPath, appInfoPlistPath, toolInfoPlistPaths):
 
 def main():
     options, appArgs = getopt.getopt(sys.argv[1:], "d")
-    
+
     debug = False
     for opt, val in options:
         if opt == "-d":
@@ -408,16 +413,18 @@ def main():
     if len(appArgs) == 0:
         raise UsageException()
     command = appArgs[0]
-    if command == "check":
-        if len(appArgs) != 2:
-            raise UsageException()
-        check(appArgs[1])
-    elif command == "setreq":
-        if len(appArgs) < 4:
-            raise UsageException()
-        setreq(appArgs[1], appArgs[2], appArgs[3:])
-    else:
+    if (
+        command == "check"
+        and len(appArgs) != 2
+        or command not in ["check", "setreq"]
+    ):
         raise UsageException()
+    elif command == "check":
+        check(appArgs[1])
+    elif len(appArgs) < 4:
+        raise UsageException()
+    else:
+        setreq(appArgs[1], appArgs[2], appArgs[3:])
 
 if __name__ == "__main__":
     try:
